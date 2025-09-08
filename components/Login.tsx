@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { User } from '../types';
-import { GoogleIcon } from '../constants';
+import { supabase } from '../app/supabaseClient';
 
 const UserIcon = (props: React.SVGProps<SVGSVGElement>) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -29,36 +29,50 @@ const EyeOffIcon = (props: React.SVGProps<SVGSVGElement>) => (
 
 interface LoginProps {
     onLoginSuccess: (user: User) => void;
-    users: User[];
 }
 
-const Login: React.FC<LoginProps> = ({ onLoginSuccess, users }) => {
+const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isPasswordVisible, setIsPasswordVisible] = useState(false);
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
         setIsLoading(true);
 
-        // Simulate API call
-        setTimeout(() => {
-            const user = users.find(u => u.email === email && u.password === password);
-            if (user) {
-                if (user.isApproved === false) {
-                    setError('Akun Anda sedang menunggu persetujuan admin. Silakan hubungi admin untuk aktivasi.');
-                    setIsLoading(false);
-                    return;
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+        });
+
+        if (authError) {
+            setError('Email atau kata sandi salah.');
+        } else if (authData.user) {
+            const { data: profileData, error: profileError } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', authData.user.id)
+                .single();
+
+            if (profileError) {
+                setError('Gagal mengambil data pengguna. Silakan coba lagi.');
+                await supabase.auth.signOut();
+            } else if (profileData) {
+                if (profileData.isApproved === false) {
+                    setError('Akun Anda sedang menunggu persetujuan admin.');
+                    await supabase.auth.signOut();
+                } else {
+                    onLoginSuccess(profileData as User);
                 }
-                onLoginSuccess(user);
             } else {
-                setError('Username atau kata sandi salah.');
+                 setError('Data pengguna tidak ditemukan.');
+                 await supabase.auth.signOut();
             }
-            setIsLoading(false);
-        }, 1000);
+        }
+        setIsLoading(false);
     };
 
     return (
@@ -84,7 +98,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, users }) => {
                                 type="text"
                                 required
                                 className="w-full h-12 pl-12 pr-4 bg-slate-100 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800"
-                                placeholder="Enter your username/email"
+                                placeholder="Masukkan email Anda"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
                             />
@@ -97,7 +111,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, users }) => {
                                 type={isPasswordVisible ? 'text' : 'password'}
                                 required
                                 className="w-full h-12 pl-12 pr-12 bg-slate-100 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800"
-                                placeholder="Enter your password"
+                                placeholder="Masukkan kata sandi Anda"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                             />
@@ -117,16 +131,10 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, users }) => {
                                 disabled={isLoading}
                                 className="button-primary w-full"
                             >
-                                {isLoading ? 'Logging In...' : 'Log In'}
+                                {isLoading ? 'Mencoba Masuk...' : 'Masuk'}
                             </button>
                         </div>
                     </form>
-                    
-                     <div className="text-center mt-6 text-xs text-slate-400 bg-slate-50 p-3 rounded-lg">
-                        <p className="font-bold text-slate-500">Akun Demo:</p>
-                        <p><span className="font-semibold text-slate-600">admin@vena.pictures</span> (pw: admin)</p>
-                        <p><span className="font-semibold text-slate-600">member@vena.pictures</span> (pw: member)</p>
-                    </div>
 
                     <div className="text-center mt-6 text-sm">
                         <p className="text-slate-500">

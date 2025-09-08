@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { ViewType, Client, Project, TeamMember, Transaction, Package, AddOn, TeamProjectPayment, Profile, FinancialPocket, TeamPaymentRecord, Lead, RewardLedgerEntry, User, Card, Asset, ClientFeedback, Contract, RevisionStatus, NavigationAction, Notification, SocialMediaPost, PromoCode, SOP, CardType, PocketType, VendorData } from './types';
-import { MOCK_USERS, DEFAULT_USER_PROFILE, MOCK_DATA, HomeIcon, FolderKanbanIcon, UsersIcon, DollarSignIcon, PlusIcon, lightenColor, darkenColor, hexToHsl } from './constants';
+import { DEFAULT_USER_PROFILE, HomeIcon, FolderKanbanIcon, UsersIcon, DollarSignIcon, PlusIcon, lightenColor, darkenColor, hexToHsl } from './constants';
+import { supabase } from './app/supabaseClient';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import { Leads } from './components/Leads';
@@ -34,31 +35,6 @@ import PromoCodes from './components/PromoCodes';
 import SOPManagement from './components/SOP';
 import Homepage from './components/Homepage';
 
-const usePersistentState = <T,>(key: string, defaultValue: T): [T, React.Dispatch<React.SetStateAction<T>>] => {
-    const [state, setState] = useState<T>(() => {
-        try {
-            const storedValue = window.localStorage.getItem(key);
-            if (storedValue) {
-                return JSON.parse(storedValue);
-            }
-            window.localStorage.setItem(key, JSON.stringify(defaultValue));
-            return defaultValue;
-        } catch (error) {
-            console.warn(`Error reading localStorage key "${key}":`, error);
-            return defaultValue;
-        }
-    });
-
-    useEffect(() => {
-        try {
-            window.localStorage.setItem(key, JSON.stringify(state));
-        } catch (error) {
-            console.warn(`Error setting localStorage key "${key}":`, error);
-        }
-    }, [key, state]);
-
-    return [state, setState];
-};
 
 const AccessDenied: React.FC<{onBackToDashboard: () => void}> = ({ onBackToDashboard }) => (
     <div className="
@@ -198,8 +174,8 @@ const BottomNavBar: React.FC<{ activeView: ViewType; handleNavigation: (view: Vi
 };
 
 const App: React.FC = () => {
-  const [isAuthenticated, setIsAuthenticated] = usePersistentState<boolean>('vena-isAuthenticated', false);
-  const [currentUser, setCurrentUser] = usePersistentState<User | null>('vena-currentUser', null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activeView, setActiveView] = useState<ViewType>(ViewType.HOMEPAGE);
   const [notification, setNotification] = useState<string>('');
   const [initialAction, setInitialAction] = useState<NavigationAction | null>(null);
@@ -207,29 +183,82 @@ const App: React.FC = () => {
   const [route, setRoute] = useState(window.location.hash || '#/home');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
-  // --- State Initialization with Persistence ---
-  const [users, setUsers] = usePersistentState<User[]>('vena-users', JSON.parse(JSON.stringify(MOCK_USERS)));
-  
-  const [clients, setClients] = usePersistentState<Client[]>('vena-clients', JSON.parse(JSON.stringify(MOCK_DATA.clients)));
-  const [projects, setProjects] = usePersistentState<Project[]>('vena-projects', JSON.parse(JSON.stringify(MOCK_DATA.projects)));
-  const [teamMembers, setTeamMembers] = usePersistentState<TeamMember[]>('vena-teamMembers', JSON.parse(JSON.stringify(MOCK_DATA.teamMembers)));
-  const [transactions, setTransactions] = usePersistentState<Transaction[]>('vena-transactions', JSON.parse(JSON.stringify(MOCK_DATA.transactions)));
-  const [teamProjectPayments, setTeamProjectPayments] = usePersistentState<TeamProjectPayment[]>('vena-teamProjectPayments', JSON.parse(JSON.stringify(MOCK_DATA.teamProjectPayments)));
-  const [teamPaymentRecords, setTeamPaymentRecords] = usePersistentState<TeamPaymentRecord[]>('vena-teamPaymentRecords', JSON.parse(JSON.stringify(MOCK_DATA.teamPaymentRecords)));
-  const [pockets, setPockets] = usePersistentState<FinancialPocket[]>('vena-pockets', JSON.parse(JSON.stringify(MOCK_DATA.pockets)));
-  const [profile, setProfile] = usePersistentState<Profile>('vena-profile', JSON.parse(JSON.stringify(MOCK_DATA.profile)));
-  const [leads, setLeads] = usePersistentState<Lead[]>('vena-leads', JSON.parse(JSON.stringify(MOCK_DATA.leads)));
-  const [rewardLedgerEntries, setRewardLedgerEntries] = usePersistentState<RewardLedgerEntry[]>('vena-rewardLedgerEntries', JSON.parse(JSON.stringify(MOCK_DATA.rewardLedgerEntries)));
-  const [cards, setCards] = usePersistentState<Card[]>('vena-cards', JSON.parse(JSON.stringify(MOCK_DATA.cards)));
-  const [assets, setAssets] = usePersistentState<Asset[]>('vena-assets', JSON.parse(JSON.stringify(MOCK_DATA.assets)));
-  const [contracts, setContracts] = usePersistentState<Contract[]>('vena-contracts', JSON.parse(JSON.stringify(MOCK_DATA.contracts)));
-  const [clientFeedback, setClientFeedback] = usePersistentState<ClientFeedback[]>('vena-clientFeedback', JSON.parse(JSON.stringify(MOCK_DATA.clientFeedback)));
-  const [notifications, setNotifications] = usePersistentState<Notification[]>('vena-notifications', JSON.parse(JSON.stringify(MOCK_DATA.notifications)));
-  const [socialMediaPosts, setSocialMediaPosts] = usePersistentState<SocialMediaPost[]>('vena-socialMediaPosts', JSON.parse(JSON.stringify(MOCK_DATA.socialMediaPosts)));
-  const [promoCodes, setPromoCodes] = usePersistentState<PromoCode[]>('vena-promoCodes', JSON.parse(JSON.stringify(MOCK_DATA.promoCodes)));
-  const [sops, setSops] = usePersistentState<SOP[]>('vena-sops', JSON.parse(JSON.stringify(MOCK_DATA.sops)));
-  const [packages, setPackages] = usePersistentState<Package[]>('vena-packages', JSON.parse(JSON.stringify(MOCK_DATA.packages)));
-  const [addOns, setAddOns] = usePersistentState<AddOn[]>('vena-addOns', JSON.parse(JSON.stringify(MOCK_DATA.addOns)));
+  // --- State Initialization ---
+  const [clients, setClients] = useState<Client[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [teamProjectPayments, setTeamProjectPayments] = useState<TeamProjectPayment[]>([]);
+  const [teamPaymentRecords, setTeamPaymentRecords] = useState<TeamPaymentRecord[]>([]);
+  const [pockets, setPockets] = useState<FinancialPocket[]>([]);
+  const [profile, setProfile] = useState<Profile>(DEFAULT_USER_PROFILE);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [rewardLedgerEntries, setRewardLedgerEntries] = useState<RewardLedgerEntry[]>([]);
+  const [cards, setCards] = useState<Card[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [clientFeedback, setClientFeedback] = useState<ClientFeedback[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [socialMediaPosts, setSocialMediaPosts] = useState<SocialMediaPost[]>([]);
+  const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
+  const [sops, setSops] = useState<SOP[]>([]);
+  const [packages, setPackages] = useState<Package[]>([]);
+  const [addOns, setAddOns] = useState<AddOn[]>([]);
+
+  useEffect(() => {
+    const fetchAllData = async () => {
+        const [
+            clientsRes, projectsRes, teamMembersRes, transactionsRes, teamProjectPaymentsRes,
+            teamPaymentRecordsRes, pocketsRes, profileRes, leadsRes, rewardLedgerEntriesRes,
+            cardsRes, assetsRes, contractsRes, clientFeedbackRes, notificationsRes,
+            socialMediaPostsRes, promoCodesRes, sopsRes, packagesRes, addOnsRes
+        ] = await Promise.all([
+            supabase.from('clients').select('*'),
+            supabase.from('projects').select('*'),
+            supabase.from('team_members').select('*'),
+            supabase.from('transactions').select('*'),
+            supabase.from('team_project_payments').select('*'),
+            supabase.from('team_payment_records').select('*'),
+            supabase.from('pockets').select('*'),
+            supabase.from('profile').select('*').single(), // Assuming single profile
+            supabase.from('leads').select('*'),
+            supabase.from('reward_ledger_entries').select('*'),
+            supabase.from('cards').select('*'),
+            supabase.from('assets').select('*'),
+            supabase.from('contracts').select('*'),
+            supabase.from('client_feedback').select('*'),
+            supabase.from('notifications').select('*'),
+            supabase.from('social_media_posts').select('*'),
+            supabase.from('promo_codes').select('*'),
+            supabase.from('sops').select('*'),
+            supabase.from('packages').select('*'),
+            supabase.from('add_ons').select('*')
+        ]);
+
+        if (clientsRes.data) setClients(clientsRes.data as Client[]);
+        if (projectsRes.data) setProjects(projectsRes.data as Project[]);
+        if (teamMembersRes.data) setTeamMembers(teamMembersRes.data as TeamMember[]);
+        if (transactionsRes.data) setTransactions(transactionsRes.data as Transaction[]);
+        if (teamProjectPaymentsRes.data) setTeamProjectPayments(teamProjectPaymentsRes.data as TeamProjectPayment[]);
+        if (teamPaymentRecordsRes.data) setTeamPaymentRecords(teamPaymentRecordsRes.data as TeamPaymentRecord[]);
+        if (pocketsRes.data) setPockets(pocketsRes.data as FinancialPocket[]);
+        if (profileRes.data) setProfile(profileRes.data as Profile);
+        if (leadsRes.data) setLeads(leadsRes.data as Lead[]);
+        if (rewardLedgerEntriesRes.data) setRewardLedgerEntries(rewardLedgerEntriesRes.data as RewardLedgerEntry[]);
+        if (cardsRes.data) setCards(cardsRes.data as Card[]);
+        if (assetsRes.data) setAssets(assetsRes.data as Asset[]);
+        if (contractsRes.data) setContracts(contractsRes.data as Contract[]);
+        if (clientFeedbackRes.data) setClientFeedback(clientFeedbackRes.data as ClientFeedback[]);
+        if (notificationsRes.data) setNotifications(notificationsRes.data as Notification[]);
+        if (socialMediaPostsRes.data) setSocialMediaPosts(socialMediaPostsRes.data as SocialMediaPost[]);
+        if (promoCodesRes.data) setPromoCodes(promoCodesRes.data as PromoCode[]);
+        if (sopsRes.data) setSops(sopsRes.data as SOP[]);
+        if (packagesRes.data) setPackages(packagesRes.data as Package[]);
+        if (addOnsRes.data) setAddOns(addOnsRes.data as AddOn[]);
+    };
+
+    fetchAllData();
+  }, []);
 
 
     // --- [NEW] MOCK EMAIL SERVICE ---
@@ -246,22 +275,65 @@ const App: React.FC = () => {
     };
 
     // --- [NEW] CENTRALIZED NOTIFICATION HANDLER ---
-    const addNotification = (newNotificationData: Omit<Notification, 'id' | 'timestamp' | 'isRead'>) => {
-        const newNotification: Notification = {
-            id: crypto.randomUUID(),
-            timestamp: new Date().toISOString(),
-            isRead: false,
-            ...newNotificationData
-        };
+    const addNotification = async (newNotificationData: Omit<Notification, 'id' | 'timestamp' | 'isRead'>) => {
+        const { data, error } = await supabase
+            .from('notifications')
+            .insert({ ...newNotificationData, isRead: false })
+            .select()
+            .single();
 
-        setNotifications(prev => [newNotification, ...prev]);
-
-        if (profile.email) {
-            sendEmailNotification(profile.email, newNotification);
-        } else {
-            console.warn('[SIMULASI EMAIL] Gagal: Alamat email vendor tidak diatur di Pengaturan Profil.');
+        if (error) {
+            console.error('Error adding notification:', error);
+        } else if (data) {
+            const newNotification = data as Notification;
+            setNotifications(prev => [newNotification, ...prev]);
+            if (profile.email) {
+                sendEmailNotification(profile.email, newNotification);
+            } else {
+                console.warn('[SIMULASI EMAIL] Gagal: Alamat email vendor tidak diatur di Pengaturan Profil.');
+            }
         }
     };
+
+  useEffect(() => {
+    const getSession = async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+            const { data: profileData } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', session.user.id)
+                .single();
+
+            if (profileData) {
+                handleLoginSuccess(profileData as User);
+            }
+        }
+    };
+    getSession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setIsAuthenticated(false);
+        setCurrentUser(null);
+        window.location.hash = '#/login';
+      } else if (session?.user) {
+        const { data: profileData } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+
+        if (profileData) {
+            handleLoginSuccess(profileData as User);
+        }
+      }
+    });
+
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -340,10 +412,8 @@ const App: React.FC = () => {
     window.location.hash = '#/dashboard';
   };
   
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setCurrentUser(null);
-    window.location.hash = '#/home';
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
   };
 
   const handleMarkAsRead = (notificationId: string) => {
@@ -395,30 +465,48 @@ const App: React.FC = () => {
     return currentUser.permissions?.includes(view) || false;
   };
   
-  const handleUpdateRevision = (projectId: string, revisionId: string, updatedData: { freelancerNotes: string; driveLink: string; status: RevisionStatus; }) => {
-    setProjects(prevProjects => {
-        const project = prevProjects.find(p => p.id === projectId);
-        if (!project) return prevProjects;
+  const handleUpdateRevision = async (projectId: string, revisionId: string, updatedData: { freelancerNotes: string; driveLink:string; status: RevisionStatus; }) => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project) {
+        console.error('Project not found for revision update');
+        showNotification('Proyek tidak ditemukan.');
+        return;
+    }
 
-        const revision = project.revisions?.find(r => r.id === revisionId);
-        if (!revision) return prevProjects;
+    const oldRevision = project.revisions?.find(r => r.id === revisionId);
 
-        if (updatedData.status === RevisionStatus.COMPLETED && revision.status !== RevisionStatus.COMPLETED) {
-            const freelancer = teamMembers.find(tm => tm.id === revision.freelancerId);
-            addNotification({
-                title: 'Revisi Telah Diselesaikan',
-                message: `${freelancer?.name || 'Seorang freelancer'} telah menyelesaikan tugas revisi untuk proyek "${project.projectName}".`,
-                icon: 'revision',
-                link: { view: ViewType.PROJECTS, action: { type: 'VIEW_PROJECT_DETAILS', id: projectId } }
-            });
+    const newRevisions = project.revisions?.map(r =>
+        r.id === revisionId
+            ? { ...r, ...updatedData, completedDate: new Date().toISOString() }
+            : r
+    ) || [];
+
+    const { data: updatedProject, error } = await supabase
+        .from('projects')
+        .update({ revisions: newRevisions })
+        .eq('id', projectId)
+        .select()
+        .single();
+
+    if (error) {
+        console.error('Error updating revision:', error);
+        showNotification('Gagal memperbarui revisi.');
+    } else if (updatedProject) {
+        setProjects(prevProjects => prevProjects.map(p => p.id === projectId ? (updatedProject as Project) : p));
+        showNotification('Revisi berhasil diperbarui.');
+
+        if (updatedData.status === RevisionStatus.COMPLETED && oldRevision?.status !== RevisionStatus.COMPLETED) {
+            if(oldRevision) {
+                const freelancer = teamMembers.find(tm => tm.id === oldRevision.freelancerId);
+                addNotification({
+                    title: 'Revisi Telah Diselesaikan',
+                    message: `${freelancer?.name || 'Seorang freelancer'} telah menyelesaikan tugas revisi untuk proyek "${project.projectName}".`,
+                    icon: 'revision',
+                    link: { view: ViewType.PROJECTS, action: { type: 'VIEW_PROJECT_DETAILS', id: projectId } }
+                });
+            }
         }
-        
-        return prevProjects.map(p => 
-            p.id === projectId 
-                ? { ...p, revisions: p.revisions?.map(r => r.id === revisionId ? { ...r, ...updatedData, completedDate: new Date().toISOString() } : r) } 
-                : p
-        );
-    });
+    }
   };
 
   const renderView = () => {
@@ -559,8 +647,6 @@ const App: React.FC = () => {
           projects={projects} setProjects={setProjects}
           packages={packages} setPackages={setPackages}
           sops={sops} setSops={setSops}
-          users={users}
-          setUsers={setUsers}
           currentUser={currentUser}
           showNotification={showNotification}
         />;
@@ -586,8 +672,8 @@ const App: React.FC = () => {
   
   // --- ROUTING LOGIC ---
   if (route.startsWith('#/home') || route === '#/') return <Homepage />;
-  if (route.startsWith('#/login')) return <Login onLoginSuccess={handleLoginSuccess} users={users} />;
-  if (route.startsWith('#/signup')) return <Signup users={users} setUsers={setUsers} />;
+  if (route.startsWith('#/login')) return <Login onLoginSuccess={handleLoginSuccess} />;
+  if (route.startsWith('#/signup')) return <Signup />;
   
   if (route.startsWith('#/public-packages')) {
     return <PublicPackages
@@ -626,7 +712,7 @@ const App: React.FC = () => {
      return <FreelancerPortal accessId={accessId} teamMembers={teamMembers} projects={projects} teamProjectPayments={teamProjectPayments} teamPaymentRecords={teamPaymentRecords} rewardLedgerEntries={rewardLedgerEntries} showNotification={showNotification} onUpdateRevision={handleUpdateRevision} sops={sops} userProfile={profile} addNotification={addNotification} />;
   }
 
-  if (!isAuthenticated) return <Login onLoginSuccess={handleLoginSuccess} users={users} />;
+  if (!isAuthenticated) return <Login onLoginSuccess={handleLoginSuccess} />;
 
   return (
     <div className="

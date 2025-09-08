@@ -1,7 +1,8 @@
 
 
 import React, { useState } from 'react';
-import { User, ViewType } from '../types';
+import { ViewType } from '../types';
+import { supabase } from '../app/supabaseClient';
 
 const UserIcon = (props: React.SVGProps<SVGSVGElement>) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -22,11 +23,10 @@ const LockIconSvg = (props: React.SVGProps<SVGSVGElement>) => (
 );
 
 interface SignupProps {
-    users: User[];
-    setUsers: React.Dispatch<React.SetStateAction<User[]>>;
+    // No props needed after refactor
 }
 
-const Signup: React.FC<SignupProps> = ({ users, setUsers }) => {
+const Signup: React.FC<SignupProps> = () => {
     const [fullName, setFullName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -35,38 +35,50 @@ const Signup: React.FC<SignupProps> = ({ users, setUsers }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [isSubmitted, setIsSubmitted] = useState(false);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+
+        if (password.length < 6) {
+            setError('Kata sandi harus terdiri dari minimal 6 karakter.');
+            return;
+        }
 
         if (password !== confirmPassword) {
             setError('Kata sandi tidak cocok.');
             return;
         }
 
-        if (users.some(u => u.email === email)) {
-            setError('Email sudah terdaftar.');
-            return;
-        }
-
         setIsLoading(true);
 
-        // Simulate API call
-        setTimeout(() => {
-            const newUser: User = {
-                id: crypto.randomUUID(),
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+            email,
+            password,
+        });
+
+        if (authError) {
+            setError(authError.message.includes('unique constraint')
+                ? 'Email sudah terdaftar. Silakan gunakan email lain.'
+                : 'Gagal mendaftar. Silakan coba lagi.');
+        } else if (authData.user) {
+            const { error: profileError } = await supabase.from('users').insert({
+                id: authData.user.id,
                 fullName,
                 email,
-                password,
                 role: 'Member',
-                permissions: [ViewType.CLIENTS, ViewType.PROJECTS, ViewType.CALENDAR], // Default permissions for new signups
-                isApproved: false, // New users are not approved by default
-            };
+                permissions: [ViewType.CLIENTS, ViewType.PROJECTS, ViewType.CALENDAR],
+                isApproved: false,
+            });
 
-            setUsers(prev => [...prev, newUser]);
-            setIsLoading(false);
-            setIsSubmitted(true);
-        }, 1000);
+            if (profileError) {
+                setError('Gagal membuat profil pengguna. Silakan hubungi admin.');
+                // In a real app, you might want to delete the auth user here
+            } else {
+                setIsSubmitted(true);
+            }
+        }
+
+        setIsLoading(false);
     };
     
     if (isSubmitted) {

@@ -256,8 +256,6 @@ interface SettingsProps {
     setPackages: React.Dispatch<React.SetStateAction<Package[]>>;
     sops: SOP[];
     setSops: React.Dispatch<React.SetStateAction<SOP[]>>;
-    users: User[];
-    setUsers: React.Dispatch<React.SetStateAction<User[]>>;
     currentUser: User | null;
     showNotification: (message: string) => void;
 }
@@ -278,8 +276,26 @@ const toBase64 = (file: File): Promise<string> => new Promise((resolve, reject) 
     reader.onerror = error => reject(error);
 });
 
-const Settings: React.FC<SettingsProps> = ({ profile, setProfile, transactions, setTransactions, projects, setProjects, packages, setPackages, sops, setSops, users, setUsers, currentUser, showNotification }) => {
+const Settings: React.FC<SettingsProps> = ({ profile, setProfile, transactions, setTransactions, projects, setProjects, packages, setPackages, sops, setSops, currentUser, showNotification }) => {
     const [activeTab, setActiveTab] = useState('profile');
+    const [users, setUsers] = useState<User[]>([]);
+
+    const fetchUsers = async () => {
+        if (currentUser?.role !== 'Admin') return;
+        const { data, error } = await supabase.from('users').select('*');
+        if (error) {
+            console.error('Error fetching users:', error);
+            showNotification('Gagal memuat daftar pengguna.');
+        } else if (data) {
+            setUsers(data);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === 'users') {
+            fetchUsers();
+        }
+    }, [activeTab]);
     const [showSuccess, setShowSuccess] = useState(false);
 
     // State for category management
@@ -429,77 +445,80 @@ const Settings: React.FC<SettingsProps> = ({ profile, setProfile, transactions, 
         });
     };
     
-    const handleUserFormSubmit = (e: React.FormEvent) => {
+    const handleUserFormSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setUserFormError('');
 
-        if (userForm.password && userForm.password !== userForm.confirmPassword) {
-            setUserFormError('Konfirmasi kata sandi tidak cocok.');
+        if (userModalMode === 'add') {
+            showNotification('Fitur tambah pengguna melalui panel admin memerlukan penyiapan sisi server (Edge Function) untuk keamanan. Silakan minta pengguna baru untuk mendaftar melalui halaman pendaftaran.');
             return;
         }
 
-        if (userModalMode === 'add') {
-            if (!userForm.email || !userForm.password || !userForm.fullName) {
-                setUserFormError('Nama, email, dan kata sandi wajib diisi.');
-                return;
-            }
-            if (users.some(u => u.email === userForm.email)) {
-                setUserFormError('Email sudah digunakan di dalam vendor ini.');
-                return;
-            }
-            if (!currentUser) {
-                setUserFormError('Tidak dapat membuat pengguna: sesi tidak valid.');
-                return;
-            }
-            const newUser: User = {
-                id: crypto.randomUUID(),
+        // Edit mode
+        if (selectedUser) {
+            // Only these fields can be updated without special privileges
+            const updates: Partial<User> = {
                 fullName: userForm.fullName,
-                email: userForm.email,
-                password: userForm.password,
                 role: userForm.role,
                 permissions: userForm.role === 'Member' ? userForm.permissions : undefined,
-                isApproved: true,
             };
-            setUsers(prev => [...prev, newUser]);
-        } else if (userModalMode === 'edit' && selectedUser) {
-            if (users.some(u => u.email === userForm.email && u.id !== selectedUser.id)) {
-                setUserFormError('Email sudah digunakan oleh pengguna lain.');
+
+            if (userForm.password) {
+                setUserFormError('Tidak dapat mengubah kata sandi dari panel ini.');
                 return;
             }
-            setUsers(prev => prev.map(u => {
-                if (u.id === selectedUser.id) {
-                    const updatedUser: User = {
-                        ...u,
-                        fullName: userForm.fullName,
-                        email: userForm.email,
-                        role: userForm.role,
-                        permissions: userForm.role === 'Member' ? userForm.permissions : undefined,
-                    };
-                    if (userForm.password) {
-                        updatedUser.password = userForm.password;
-                    }
-                    return updatedUser;
-                }
-                return u;
-            }));
+            if (userForm.email !== selectedUser.email) {
+                setUserFormError('Tidak dapat mengubah email dari panel ini.');
+                return;
+            }
+
+            const { error } = await supabase
+                .from('users')
+                .update(updates)
+                .eq('id', selectedUser.id);
+
+            if (error) {
+                setUserFormError(`Gagal memperbarui profil: ${error.message}`);
+            } else {
+                await fetchUsers();
+                handleCloseUserModal();
+                showNotification('Profil pengguna berhasil diperbarui.');
+            }
         }
-        handleCloseUserModal();
     };
 
-    const handleDeleteUser = (userId: string) => {
+    const handleDeleteUser = async (userId: string) => {
         if (userId === currentUser?.id) {
             alert("Anda tidak dapat menghapus akun Anda sendiri.");
             return;
         }
-        if (window.confirm("Apakah Anda yakin ingin menghapus pengguna ini?")) {
-            setUsers(prev => prev.filter(u => u.id !== userId));
+        if (window.confirm("Apakah Anda yakin ingin menghapus pengguna ini? Tindakan ini tidak dapat diurungkan.")) {
+            // Deleting from auth.users requires admin privileges not available on client-side.
+            // We will only delete the profile for now and notify about the limitation.
+            const { error } = await supabase.from('users').delete().eq('id', userId);
+
+            if (error) {
+                showNotification(`Gagal menghapus profil pengguna: ${error.message}`);
+            } else {
+                showNotification('Profil pengguna berhasil dihapus. Untuk menghapus akun sepenuhnya, diperlukan tindakan dari Supabase dashboard.');
+                await fetchUsers();
+            }
         }
     };
     
-    const handleApproveUser = (userId: string) => {
-        setUsers(prev => prev.map(u => u.id === userId ? { ...u, isApproved: true } : u));
-        showNotification('Pengguna berhasil disetujui dan sekarang dapat login.');
-        handleCloseUserModal();
+    const handleApproveUser = async (userId: string) => {
+        const { error } = await supabase
+            .from('users')
+            .update({ isApproved: true })
+            .eq('id', userId);
+
+        if (error) {
+            showNotification(`Gagal menyetujui pengguna: ${error.message}`);
+        } else {
+            showNotification('Pengguna berhasil disetujui dan sekarang dapat login.');
+            await fetchUsers();
+            handleCloseUserModal();
+        }
     };
     
     // --- Category Management Handlers ---
